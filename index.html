@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script>
+      // Run before the document UI, without a framework, polyfill, or API patch.
+      window.streamRepro = { version: 1, errors: [], initializationError: null, transferError: null };
+      window.streamRepro.selected = new URLSearchParams(location.search).get("case") || "all";
+      window.streamRepro.chunks = ["ASCII", " / café", " / 日本語", " / 😀", "\n"];
+      window.addEventListener("error", function (event) {
+        window.streamRepro.errors.push({ message: event.message, stack: event.error && event.error.stack, filename: event.filename, line: event.lineno });
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        window.streamRepro.errors.push({ message: String(event.reason), stack: event.reason && event.reason.stack });
+      });
+      if (["all", "original"].includes(window.streamRepro.selected)) {
+        window.__reactRouterContext = {};
+        try {
+          // The original React Router initialization, unchanged.
+          window.__reactRouterContext.stream = new ReadableStream({
+            start(controller) {
+              window.__reactRouterContext.streamController = controller;
+            }
+          }).pipeThrough(new TextEncoderStream());
+        } catch (error) {
+          window.streamRepro.initializationError = error;
+        }
+        window.streamRepro.controllerAssigned = !!window.__reactRouterContext.streamController;
+        window.streamRepro.streamAssigned = !!window.__reactRouterContext.stream;
+      }
+    </script>
+    <script>
+      // A separate classic inline script, like the server's transfer scripts.
+      if (["all", "original"].includes(window.streamRepro.selected)) {
+        try {
+          for (const chunk of window.streamRepro.chunks) {
+            window.__reactRouterContext.streamController.enqueue(chunk);
+          }
+          window.__reactRouterContext.streamController.close();
+        } catch (error) {
+          window.streamRepro.transferError = error;
+        }
+      }
+    </script>
+    <title>Chrome iOS stream reproduction</title>
+    <link rel="icon" href="data:,">
+    <style>
+      :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+      body { max-width: 54rem; margin: auto; padding: 1.25rem; }
+      h1 { font-size: 1.75rem; line-height: 1.2; }
+      h2 { font-size: 1.2rem; margin-top: 2rem; }
+      a { color: light-dark(#075ba3, #8acaff); }
+      code, pre, textarea { font: .85rem/1.5 ui-monospace, monospace; }
+      code, pre { overflow-wrap: anywhere; white-space: pre-wrap; }
+      button, textarea { color: inherit; background: Canvas; border: 1px solid GrayText; border-radius: .25rem; }
+      button { font: inherit; padding: .6rem .9rem; min-height: 44px; cursor: pointer; }
+      button:disabled { cursor: wait; }
+      :focus-visible { outline: 3px solid light-dark(#075ba3, #8acaff); outline-offset: 3px; }
+      textarea { display: block; box-sizing: border-box; width: 100%; padding: .75rem; margin: .5rem 0 1rem; }
+      #results { padding-left: 1.5rem; }
+      #results > li { margin: 1rem 0; padding: .75rem; border: 1px solid GrayText; }
+      #results pre { margin-bottom: 0; }
+      .pass { color: light-dark(#17602b, #8bd89c); }
+      .fail { color: light-dark(#a11515, #ffaaaa); }
+      .controls { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Chrome iOS stream reproduction</h1>
+      <p>A dependency-free probe for <a href="https://github.com/remix-run/react-router/issues/15486">React Router #15486</a>. Tests run automatically. Open this URL directly in each browser or in-app browser you want to compare.</p>
+      <p>This page tests the reported failure; it does not assume the browser hooks these APIs. No application libraries, polyfills, or synthetic hooks are installed.</p>
+      <p>Fresh-page runs: <a href="?case=all">All checks</a> · <a href="?case=original">Original</a> · <a href="?case=constructor">Encoder only</a> · <a href="?case=pipe">Pipe only</a> · <a href="?case=replacement">Replacement</a></p>
+      <noscript><p>JavaScript is required to run these checks.</p></noscript>
+      <p id="summary" role="status">Running checks…</p>
+      <ol id="results"></ol>
+      <h2>Share the results</h2>
+      <label for="notes">Exact iOS version, app name/version, and anything unusual about this run</label>
+      <textarea id="notes" rows="3" placeholder="For example: iOS version from Settings; Chrome version from its menu."></textarea>
+      <div class="controls">
+        <button id="reload" type="button">Reload and run again</button>
+        <button id="copy" type="button" disabled>Copy report</button>
+        <span id="copy-status" role="status"></span>
+      </div>
+      <p><label for="report">Diagnostic report (also selectable manually)</label></p>
+      <textarea id="report" rows="18" readonly spellcheck="false"></textarea>
+      <p>Function source strings are diagnostic hints; they cannot prove whether an API was modified. Results stay on this page until you choose to share them.</p>
+      <p><a href="https://github.com/brophdawg11/repro-chrome-mobile-ios-stream-bug">Source and instructions</a></p>
+    </main>
+    <script>
+      "use strict";
+      const repro = window.streamRepro;
+      const expected = repro.chunks.join("");
+      const results = [];
+      let complete = false;
+      const summary = document.getElementById("summary");
+      const report = document.getElementById("report");
+      const notes = document.getElementById("notes");
+      const sources = {};
+      const environment = {
+        timestamp: new Date().toISOString(),
+        url: location.href,
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        maxTouchPoints: navigator.maxTouchPoints,
+        secureContext: window.isSecureContext
+      };
+      for (const name of ["ReadableStream", "TextEncoderStream", "TransformStream", "TextEncoder", "TextDecoder"]) {
+        try {
+          sources[name] = typeof window[name] === "function" ? Function.prototype.toString.call(window[name]) : "unavailable";
+        } catch (error) { sources[name] = String(error); }
+      }
+      try {
+        sources.pipeThrough = Function.prototype.toString.call(ReadableStream.prototype.pipeThrough);
+      } catch (error) { sources.pipeThrough = String(error); }
+
+      function describeError(error) {
+        return error ? { name: error.name, message: String(error.message || error), stack: error.stack } : null;
+      }
+
+      function updateReport() {
+        if (complete) {
+          summary.textContent = results.every(function (result) { return result.status === "PASS"; }) && !repro.errors.length
+            ? "All selected checks passed. No failure reproduced in this browser."
+            : "A check or page error occurred, or an API is unsupported. Share the report with the exact app and iOS versions.";
+        }
+        report.value = JSON.stringify({
+          version: repro.version, selectedCase: repro.selected, environment, notes: notes.value,
+          earlyInitialization: {
+            ran: ["all", "original"].includes(repro.selected),
+            streamAssigned: repro.streamAssigned, controllerAssigned: repro.controllerAssigned,
+            error: describeError(repro.initializationError), transferError: describeError(repro.transferError)
+          },
+          expected, results, globalErrors: repro.errors, functionSources: sources
+        }, null, 2);
+      }
+
+      async function readText(stream, bytes) {
+        const reader = stream.getReader();
+        const decoder = bytes ? new TextDecoder() : null;
+        let text = "";
+        let timer;
+        try {
+          const consume = (async function () {
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) return text + (decoder ? decoder.decode() : "");
+              if (bytes && !(value instanceof Uint8Array)) throw new Error("Expected Uint8Array output");
+              if (!bytes && typeof value !== "string") throw new Error("Expected string output");
+              text += decoder ? decoder.decode(value, { stream: true }) : value;
+            }
+          })();
+          return await Promise.race([consume, new Promise(function (_, reject) {
+            timer = setTimeout(function () {
+              const error = new Error("No stream completion within 4 seconds");
+              error.name = "TimeoutError";
+              reject(error);
+              reader.cancel("diagnostic timeout").catch(function () {});
+            }, 4000);
+          })]);
+        } finally {
+          clearTimeout(timer);
+          reader.releaseLock();
+        }
+      }
+
+      const checks = [
+        { id: "original", name: "Original: early inline initialization + transfer + byte read", apis: ["ReadableStream", "TextEncoderStream", "TextDecoder"], run: async function () {
+          if (repro.initializationError) throw repro.initializationError;
+          if (repro.transferError) throw repro.transferError;
+          return readText(window.__reactRouterContext.stream, true);
+        } },
+        { id: "constructor", name: "TextEncoderStream: constructor + writer, without pipeThrough", apis: ["TextEncoderStream", "TextDecoder"], run: async function () {
+          const encoder = new TextEncoderStream();
+          const output = readText(encoder.readable, true);
+          const writer = encoder.writable.getWriter();
+          const writes = (async function () {
+            try {
+              for (const chunk of repro.chunks) await writer.write(chunk);
+              await writer.close();
+            } finally { writer.releaseLock(); }
+          })();
+          return (await Promise.all([output, writes]))[0];
+        } },
+        { id: "pipe", name: "pipeThrough: identity TransformStream, without TextEncoderStream", apis: ["ReadableStream", "TransformStream"], run: async function () {
+          const source = new ReadableStream({ start: function (controller) {
+            for (const chunk of repro.chunks) controller.enqueue(chunk);
+            controller.close();
+          } });
+          return readText(source.pipeThrough(new TransformStream()), false);
+        } },
+        { id: "replacement", name: "Replacement: TextEncoder controller wrapper + byte read", apis: ["ReadableStream", "TextEncoder", "TextDecoder"], run: async function () {
+          let streamController;
+          const stream = new ReadableStream({ start: function (controller) {
+            const encoder = new TextEncoder();
+            streamController = {
+              enqueue: function (chunk) { controller.enqueue(encoder.encode(chunk)); },
+              close: function () { controller.close(); },
+              error: function (error) { controller.error(error); }
+            };
+          } });
+          for (const chunk of repro.chunks) streamController.enqueue(chunk);
+          streamController.close();
+          return readText(stream, true);
+        } }
+      ];
+
+      async function run() {
+        const selected = checks.filter(function (check) { return repro.selected === "all" || check.id === repro.selected; });
+        if (!selected.length) {
+          summary.textContent = "Unknown case. Choose a fresh-page run above.";
+          updateReport();
+          return;
+        }
+        for (const check of selected) {
+          const row = document.createElement("li");
+          const label = document.createElement("strong");
+          label.textContent = "RUNNING — " + check.name;
+          row.append(label);
+          document.getElementById("results").append(row);
+          await new Promise(function (resolve) { setTimeout(resolve, 0); });
+          const result = { id: check.id, name: check.name, status: "PASS" };
+          const missing = check.apis.filter(function (api) { return typeof window[api] !== "function"; });
+          try {
+            if (missing.length) {
+              result.status = "UNSUPPORTED";
+              result.missingAPIs = missing;
+            } else {
+              result.actual = await check.run();
+              if (result.actual !== expected) throw new Error("Round-trip output did not match input");
+            }
+          } catch (error) {
+            result.status = error.name === "TimeoutError" ? "TIMEOUT" : "FAIL";
+            result.error = describeError(error);
+          }
+          results.push(result);
+          label.textContent = result.status + " — " + check.name;
+          label.className = result.status === "PASS" ? "pass" : "fail";
+          const detail = document.createElement("pre");
+          detail.textContent = result.error ? result.error.stack || result.error.message : result.missingAPIs ? "Unavailable: " + missing.join(", ") : JSON.stringify(result.actual);
+          row.append(detail);
+          updateReport();
+        }
+        complete = true;
+        updateReport();
+        document.getElementById("copy").disabled = false;
+      }
+      notes.addEventListener("input", updateReport);
+      window.addEventListener("error", updateReport);
+      window.addEventListener("unhandledrejection", updateReport);
+      document.getElementById("reload").addEventListener("click", function () { location.reload(); });
+      document.getElementById("copy").addEventListener("click", async function () {
+        updateReport();
+        try {
+          await navigator.clipboard.writeText(report.value);
+          document.getElementById("copy-status").textContent = "Report copied.";
+        } catch (error) {
+          report.focus();
+          report.select();
+          document.getElementById("copy-status").textContent = "Select and copy the report manually.";
+        }
+      });
+      run().catch(function (error) {
+        repro.errors.push(describeError(error));
+        summary.textContent = "The diagnostic runner failed. See the report.";
+        updateReport();
+      });
+    </script>
+  </body>
+</html>
